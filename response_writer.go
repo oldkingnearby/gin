@@ -6,6 +6,7 @@ package gin
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"net"
 	"net/http"
@@ -41,21 +42,61 @@ type ResponseWriter interface {
 
 	// get the http.Pusher for server push
 	Pusher() http.Pusher
+
+	// 获取返回结果 
+	GetResp() []byte
+
+	// 默认不需要返回
+	NeedGetResp()
 }
 
 type responseWriter struct {
 	http.ResponseWriter
-	size   int
-	status int
+	size        int
+	status      int
+	buff        *bytes.Buffer //添加的一个缓存
+	needGetResp bool
 }
 
-var _ ResponseWriter = &responseWriter{}
+func (w *responseWriter) NeedGetResp() {
+	w.needGetResp = true
+	w.buff = new(bytes.Buffer)
+}
+
+func (w *responseWriter) GetResp() []byte {
+	if w.needGetResp {
+		return w.buff.Bytes()
+	}
+	return nil
+}
 
 func (w *responseWriter) reset(writer http.ResponseWriter) {
 	w.ResponseWriter = writer
 	w.size = noWritten
 	w.status = defaultStatus
+	w.needGetResp = false
 }
+func (w *responseWriter) Write(data []byte) (n int, err error) {
+	w.WriteHeaderNow()
+	n, err = w.ResponseWriter.Write(data)
+	w.size += n
+	if w.needGetResp {
+		w.buff.Write(data)
+	}
+	return
+}
+
+func (w *responseWriter) WriteString(s string) (n int, err error) {
+	w.WriteHeaderNow()
+	n, err = io.WriteString(w.ResponseWriter, s)
+	w.size += n
+	if w.needGetResp {
+		w.buff.WriteString(s)
+	}
+	return
+}
+
+var _ ResponseWriter = &responseWriter{}
 
 func (w *responseWriter) WriteHeader(code int) {
 	if code > 0 && w.status != code {
@@ -71,20 +112,6 @@ func (w *responseWriter) WriteHeaderNow() {
 		w.size = 0
 		w.ResponseWriter.WriteHeader(w.status)
 	}
-}
-
-func (w *responseWriter) Write(data []byte) (n int, err error) {
-	w.WriteHeaderNow()
-	n, err = w.ResponseWriter.Write(data)
-	w.size += n
-	return
-}
-
-func (w *responseWriter) WriteString(s string) (n int, err error) {
-	w.WriteHeaderNow()
-	n, err = io.WriteString(w.ResponseWriter, s)
-	w.size += n
-	return
 }
 
 func (w *responseWriter) Status() int {
